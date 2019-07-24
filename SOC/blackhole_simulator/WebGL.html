@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>BLACKHOLE</title>
+    <meta http-equiv="Content-Type" content="text/html; charset=UTF-8"/>
+    <meta name="viewport" content="width=device-width, user-scalable=no"/>  
+  <script id="blackhole-vertex-shader" type="x-shader/x-vertex">
+        attribute vec2 a_position;
+        varying vec2 v_texCoord;   
+
+        void main( )
+        {
+            gl_Position = vec4( a_position, 0, 1 );
+            v_texCoord = a_position;
+        }
+    </script>
+
+    <script id="blackhole-fragment-shader" type="x-shader/x-fragment">
+        precision highp float;
+        #define M_PI 3.14159265358979323846
+
+        uniform sampler2D u_blackhole;
+        uniform sampler2D u_background;
+        uniform vec2 u_fov;         
+        uniform vec2 u_view;       
+        uniform vec2 u_bhsize;     
+        uniform mat3 u_vm;          
+        uniform mat3 u_sm;          
+        varying vec2 v_texCoord;    
+        // round a number
+        float round( float x )
+        {
+            return x-floor( x ) < 0.5 ? floor( x ) : ceil( x );
+        }
+
+        vec2 unpack( vec4 x )
+        {
+            return (x.zx + x.wy/256.0)*(255.0/256.0);
+        }
+
+        vec2 unproject(  )
+        {
+            vec2 t = u_fov*v_texCoord;
+            vec3 x = vec3( 4.0 - t.x*t.x - t.y*t.y, 4.0*t );           
+            x = normalize( u_vm*x );                                   
+            return vec2( mod( atan( x.y, x.x )/(2.0*M_PI), 1.0 ), 1.0 - acos( x.z )/M_PI ); 
+        }
+
+        
+        vec2 interpolate( vec2 stex )
+        {
+            vec3 delta = vec3( vec2( 1.0, 1.0 )/u_bhsize, 0.0 );
+            vec2 rem = stex*u_bhsize - 0.5;
+            stex = floor( rem );
+            rem -= stex;
+            stex /= u_bhsize;
+            
+            vec2 t1 = unpack( texture2D( u_blackhole, stex ) );
+            vec2 t2 = unpack( texture2D( u_blackhole, stex+delta.xz ) );
+            vec2 t3 = unpack( texture2D( u_blackhole, stex+delta.zy ) );
+            vec2 t4 = unpack( texture2D( u_blackhole, stex+delta.xy ) );
+          
+            t2 = (t2 == vec2( 0.0, 0.0 )) ? t1 : t2;
+            t3 = (t3 == vec2( 0.0, 0.0 )) ? t1 : t3;
+            t4 = (t4 == vec2( 0.0, 0.0 )) ? t1 : t4;
+            
+            t2.x = t2.x-round(t2.x-t1.x);
+            t3.x = t3.x-round(t3.x-t1.x);
+            t4.x = t4.x-round(t4.x-t1.x);
+            
+            return (t1 == vec2( 0.0, 0.0 )) ? t1 : (1.0-rem.x)*(1.0-rem.y)*t1 + (rem.x)*(1.0-rem.y)*t2 + (1.0-rem.x)*(rem.y)*t3 + (rem.x)*(rem.y)*t4;
+        }
+
+        
+        vec2 equirect( vec2 tex )
+        {
+            vec3 x = u_sm*vec3( sin( tex.y*M_PI )*cos( tex.x*M_PI*2.0 ), -sin( tex.y*M_PI )*sin( tex.x*M_PI*2.0 ), cos( tex.y*M_PI ) ); 
+            return vec2( mod( atan( x.y, x.x )/(2.0*M_PI), 1.0 ), 1.0 - acos( x.z )/M_PI );                                        
+        }
+
+        vec2 ricohtheta( vec2 tex )
+        {
+            vec3 x = u_sm*vec3( sin( tex.y*M_PI )*cos( tex.x*M_PI*2.0 ), -sin( tex.y*M_PI )*sin( tex.x*M_PI*2.0 ), cos( tex.y*M_PI ) ); 
+            float r = acos( x.x )/M_PI;
+            vec2 fishrad = r < 0.5 ? r*vec2( 0.4415, 0.78488888888888888888 ) : (1.0-r)*vec2( -0.4415, 0.78488888888888888888 );
+            vec2 fishcenter = r < 0.5 ? vec2( 0.25, 0.5555555555555555 ) : vec2( 0.75, 0.5555555555555555 );
+            x.z = -x.z;     // experimentally decided this is needed
+            return 1.01*fishrad*x.zy/length( x.yz ) + fishcenter;
+        }
+
+        void main360( )
+        {
+            vec2 stex = unproject( );           
+            vec2 tex = interpolate( stex );     
+            stex = equirect( tex );             
+
+            gl_FragColor = (tex == vec2( 0.0, 0.0 )) ? vec4( 0.0, 0.0, 0.0, 1.0 ) : texture2D( u_background, stex );
+        }
+
+        void main360Th( )
+        {
+            vec2 stex = unproject( );           
+            vec2 tex = interpolate( stex );     
+            stex = ricohtheta( tex );           
+
+            
+            gl_FragColor = (tex == vec2( 0.0, 0.0 )) ? vec4( 0.0, 0.0, 0.0, 1.0 ) : texture2D( u_background, stex );
+        }
+
+        void mainNormal( )
+        {
+            vec2 stex = u_fov*v_texCoord + u_view; 
+            vec2 tex = interpolate( stex );         
+            stex = equirect( tex );                 
+
+            
+            gl_FragColor = (tex == vec2( 0.0, 0.0 )) ? vec4( 0.0, 0.0, 0.0, 1.0 ) : texture2D( u_background, stex );
+        }
+
+        void mainTh( )
+        {
+            vec2 stex = u_fov*v_texCoord + u_view;  
+            vec2 tex = interpolate( stex );         
+            stex = ricohtheta( tex );               
+            gl_FragColor = (tex == vec2( 0.0, 0.0 )) ? vec4( 0.0, 0.0, 0.0, 1.0 ) : texture2D( u_background, stex );
+        }
+    </script>
+
+    <script type="text/javascript" src="wgl.js"></script>
+</head>
+
+<body onload="wgl = new WGLViewer( 'canvas', 'controls' );">
+    <div id="container">
+        <canvas id="canvas" width="1000" height="786"></canvas>
+        <script>
+        var cont = document.getElementById("canvas");
+        cont.width = window.innerWidth;
+        cont.height = window.innerHeight;
+        </script>
+   
+    <div id="controls">
+        <ul>
+                <span id="bg_image"  value="backgrounds/milkyway.jpg">
+                 </span>
+                <span id="bh_type"  value="textures/2vr.png">
+                </span>
+           
+        </ul>
+    </div>
+</body>
+</html>
